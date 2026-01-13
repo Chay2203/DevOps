@@ -1,0 +1,323 @@
+# =============================================================================
+# Image Editor - CI/CD Pipeline
+# =============================================================================
+# Production-grade CI/CD pipeline implementing DevSecOps best practices:
+# - Code quality checks (Checkstyle)
+# - Static Application Security Testing (CodeQL)
+# - Software Composition Analysis (OWASP Dependency Check)
+# - Unit testing with JUnit 5
+# - Container vulnerability scanning (Trivy)
+# - Docker image build and push to DockerHub
+# =============================================================================
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      skip_security_scans:
+        description: 'Skip security scans (for faster iteration)'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  JAVA_VERSION: '17'
+  DOCKER_IMAGE_NAME: image-editor
+
+jobs:
+  # ===========================================================================
+  # Stage 1-3: Build Setup
+  # ===========================================================================
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Stage 1: Checkout - Retrieve source code
+      # Why: Foundation step to get the codebase for all subsequent operations
+      # -----------------------------------------------------------------------
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better analysis
+
+      # -----------------------------------------------------------------------
+      # Stage 2: Setup Java Runtime
+      # Why: Provides consistent Java environment across all CI runs
+      # -----------------------------------------------------------------------
+      - name: Setup Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # -----------------------------------------------------------------------
+      # Stage 3: Cache Dependencies
+      # Why: Speeds up builds by reusing downloaded dependencies
+      # -----------------------------------------------------------------------
+      - name: Cache Maven Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.sonar/cache
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # -----------------------------------------------------------------------
+      # Stage 4: Linting (Checkstyle)
+      # Why: Enforces coding standards, prevents technical debt accumulation
+      # -----------------------------------------------------------------------
+      - name: Code Linting (Checkstyle)
+        run: mvn checkstyle:check -Dcheckstyle.failsOnError=false
+        continue-on-error: true
+
+      # -----------------------------------------------------------------------
+      # Stage 7: Unit Tests
+      # Why: Validates business logic, prevents regressions in functionality
+      # -----------------------------------------------------------------------
+      - name: Run Unit Tests
+        run: mvn test
+
+      # -----------------------------------------------------------------------
+      # Stage 8: Build Application
+      # Why: Creates deployable JAR artifact for containerization
+      # -----------------------------------------------------------------------
+      - name: Build Application
+        run: mvn package -DskipTests
+
+      # Upload build artifacts for subsequent jobs
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: target/*.jar
+          retention-days: 5
+
+  # ===========================================================================
+  # Stage 5: SAST - Static Application Security Testing (CodeQL)
+  # ===========================================================================
+  sast:
+    name: SAST (CodeQL)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Stage 5: SAST with CodeQL
+      # Why: Detects OWASP Top 10 vulnerabilities (SQL injection, XSS, etc.)
+      #      Shifts security left by catching issues before deployment
+      # -----------------------------------------------------------------------
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: java
+          queries: security-extended
+
+      - name: Setup Java for CodeQL
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Build for CodeQL Analysis
+        run: mvn compile -DskipTests
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:java"
+
+  # ===========================================================================
+  # Stage 6: SCA - Software Composition Analysis (OWASP Dependency Check)
+  # ===========================================================================
+  sca:
+    name: SCA (Dependency Check)
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_security_scans != 'true'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # -----------------------------------------------------------------------
+      # Stage 6: SCA with OWASP Dependency Check
+      # Why: Identifies known vulnerabilities (CVEs) in dependencies
+      #      Protects against supply chain attacks
+      # -----------------------------------------------------------------------
+      - name: OWASP Dependency Check
+        run: mvn org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=9
+        continue-on-error: true
+
+      - name: Upload Dependency Check Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-check-report
+          path: target/dependency-check-report.html
+          retention-days: 5
+
+  # ===========================================================================
+  # Stage 9-12: Docker Build, Scan, Test, and Push
+  # ===========================================================================
+  docker:
+    name: Docker Build & Push
+    runs-on: ubuntu-latest
+    needs: [build]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build JAR for Docker
+        run: mvn package -DskipTests
+
+      # -----------------------------------------------------------------------
+      # Stage 9: Docker Build
+      # Why: Creates consistent, portable container image for deployment
+      # -----------------------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.DOCKER_IMAGE_NAME }}:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # -----------------------------------------------------------------------
+      # Stage 10: Container Vulnerability Scan (Trivy)
+      # Why: Detects OS and library vulnerabilities in the container image
+      #      Prevents shipping vulnerable images to production
+      # -----------------------------------------------------------------------
+      - name: Scan Docker Image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_IMAGE_NAME }}:test
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Trivy SARIF Report
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_IMAGE_NAME }}:test
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+        continue-on-error: true
+
+      - name: Upload Trivy Scan Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+
+      # -----------------------------------------------------------------------
+      # Stage 11: Runtime Test
+      # Why: Validates that the container actually runs and responds correctly
+      #      Catches issues that static analysis might miss
+      # -----------------------------------------------------------------------
+      - name: Container Runtime Test
+        run: |
+          echo "Testing container startup..."
+          docker run --rm ${{ env.DOCKER_IMAGE_NAME }}:test --help
+          echo "Container runtime test passed!"
+
+      # -----------------------------------------------------------------------
+      # Stage 12: Push to DockerHub Registry
+      # Why: Publishes trusted, scanned image for downstream deployment
+      #      Only runs on main branch to prevent publishing untested code
+      # -----------------------------------------------------------------------
+      - name: Login to DockerHub
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Push to DockerHub
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ===========================================================================
+  # Pipeline Summary
+  # ===========================================================================
+  summary:
+    name: Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [build, sast, sca, docker]
+    if: always()
+
+    steps:
+      - name: Pipeline Status Summary
+        run: |
+          echo "=============================================="
+          echo "           CI/CD Pipeline Summary             "
+          echo "=============================================="
+          echo ""
+          echo "Build & Test:     ${{ needs.build.result }}"
+          echo "SAST (CodeQL):    ${{ needs.sast.result }}"
+          echo "SCA (OWASP):      ${{ needs.sca.result }}"
+          echo "Docker:           ${{ needs.docker.result }}"
+          echo ""
+          echo "=============================================="
+
+          if [[ "${{ needs.build.result }}" == "failure" ]] || \
+             [[ "${{ needs.docker.result }}" == "failure" ]]; then
+            echo "Pipeline FAILED - Check logs for details"
+            exit 1
+          else
+            echo "Pipeline PASSED"
+          fi

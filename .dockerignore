@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+
+# IDE files
+.idea
+*.iml
+.vscode
+*.swp
+*.swo
+
+# Build outputs
+target/
+*.class
+*.jar
+!src/main/resources/*.jar
+
+# Maven
+.mvn/
+mvnw
+mvnw.cmd
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+*.pdf
+!README.md
+
+# Test outputs
+output.jpg
+test-output/
+
+# Old source directory
+Image-Editor-main/
