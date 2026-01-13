@@ -263,8 +263,20 @@ jobs:
       # Why: Publishes trusted, scanned image for downstream deployment
       #      Only runs on main branch to prevent publishing untested code
       # -----------------------------------------------------------------------
-      - name: Login to DockerHub
+      - name: Check DockerHub Credentials
+        id: dockerhub-check
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "has_credentials=true" >> $GITHUB_OUTPUT
+            echo "image_name=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}" >> $GITHUB_OUTPUT
+          else
+            echo "has_credentials=false" >> $GITHUB_OUTPUT
+            echo "::warning::DockerHub credentials not configured. Skipping push."
+          fi
+
+      - name: Login to DockerHub
+        if: steps.dockerhub-check.outputs.has_credentials == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -272,17 +284,17 @@ jobs:
 
       - name: Extract Metadata for Docker
         id: meta
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: steps.dockerhub-check.outputs.has_credentials == 'true'
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}
+          images: ${{ steps.dockerhub-check.outputs.image_name }}
           tags: |
             type=ref,event=branch
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Push to DockerHub
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: steps.dockerhub-check.outputs.has_credentials == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
