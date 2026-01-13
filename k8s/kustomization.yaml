@@ -1,0 +1,25 @@
+# =============================================================================
+# Kustomization - Manages all K8s resources
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: image-editor
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: image-editor
+  app.kubernetes.io/managed-by: kustomize
+
+# Image configuration - updated by CI/CD
+# For local testing, use: image-editor:local
+images:
+  - name: IMAGE_PLACEHOLDER
+    newName: image-editor
+    newTag: local

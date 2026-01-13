@@ -1,0 +1,21 @@
+# =============================================================================
+# Service - Internal service for the Image Editor (ClusterIP)
+# =============================================================================
+# Note: This is a CLI application, so the service is primarily for
+# internal communication and job orchestration if needed.
+apiVersion: v1
+kind: Service
+metadata:
+  name: image-editor
+  namespace: image-editor
+  labels:
+    app: image-editor
+spec:
+  type: ClusterIP
+  selector:
+    app: image-editor
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http

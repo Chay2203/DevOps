@@ -305,12 +305,107 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ===========================================================================
+  # Stage 13: Deploy to Kubernetes
+  # ===========================================================================
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: [docker]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Check if Kubernetes credentials are configured
+      # -----------------------------------------------------------------------
+      - name: Check Kubernetes Credentials
+        id: k8s-check
+        run: |
+          if [ -n "${{ secrets.KUBE_CONFIG }}" ]; then
+            echo "has_credentials=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_credentials=false" >> $GITHUB_OUTPUT
+            echo "::warning::Kubernetes credentials not configured. Skipping deployment."
+            echo "::warning::To enable deployment, add KUBE_CONFIG secret with base64 encoded kubeconfig"
+          fi
+
+      # -----------------------------------------------------------------------
+      # Setup kubectl
+      # -----------------------------------------------------------------------
+      - name: Setup kubectl
+        if: steps.k8s-check.outputs.has_credentials == 'true'
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      # -----------------------------------------------------------------------
+      # Configure Kubernetes credentials
+      # -----------------------------------------------------------------------
+      - name: Configure Kubernetes
+        if: steps.k8s-check.outputs.has_credentials == 'true'
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      # -----------------------------------------------------------------------
+      # Update image tag in Kustomization
+      # -----------------------------------------------------------------------
+      - name: Update Image Tag
+        if: steps.k8s-check.outputs.has_credentials == 'true'
+        run: |
+          cd k8s
+          # Update the image in kustomization.yaml
+          sed -i "s|newName: DOCKERHUB_USERNAME/image-editor|newName: ${{ secrets.DOCKERHUB_USERNAME }}/image-editor|g" kustomization.yaml
+          sed -i "s|newTag: latest|newTag: ${{ github.sha }}|g" kustomization.yaml
+          echo "Updated kustomization.yaml:"
+          cat kustomization.yaml
+
+      # -----------------------------------------------------------------------
+      # Deploy to Kubernetes
+      # Why: Applies the Kubernetes manifests to deploy the application
+      # -----------------------------------------------------------------------
+      - name: Deploy to Kubernetes
+        if: steps.k8s-check.outputs.has_credentials == 'true'
+        run: |
+          echo "Deploying to Kubernetes..."
+          kubectl apply -k k8s/
+
+          echo "Waiting for deployment to complete..."
+          kubectl rollout status deployment/image-editor -n image-editor --timeout=300s
+
+          echo "Deployment successful!"
+          kubectl get pods -n image-editor
+
+      # -----------------------------------------------------------------------
+      # Verify Deployment
+      # -----------------------------------------------------------------------
+      - name: Verify Deployment
+        if: steps.k8s-check.outputs.has_credentials == 'true'
+        run: |
+          echo "=============================================="
+          echo "         Deployment Verification              "
+          echo "=============================================="
+          echo ""
+          echo "Pods:"
+          kubectl get pods -n image-editor -o wide
+          echo ""
+          echo "Services:"
+          kubectl get svc -n image-editor
+          echo ""
+          echo "Deployment Details:"
+          kubectl describe deployment image-editor -n image-editor | head -50
+
+  # ===========================================================================
   # Pipeline Summary
   # ===========================================================================
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-latest
-    needs: [build, sast, sca, docker]
+    needs: [build, sast, sca, docker, deploy]
     if: always()
 
     steps:
@@ -324,11 +419,13 @@ jobs:
           echo "SAST (CodeQL):    ${{ needs.sast.result }}"
           echo "SCA (OWASP):      ${{ needs.sca.result }}"
           echo "Docker:           ${{ needs.docker.result }}"
+          echo "Deploy (K8s):     ${{ needs.deploy.result }}"
           echo ""
           echo "=============================================="
 
           if [[ "${{ needs.build.result }}" == "failure" ]] || \
-             [[ "${{ needs.docker.result }}" == "failure" ]]; then
+             [[ "${{ needs.docker.result }}" == "failure" ]] || \
+             [[ "${{ needs.deploy.result }}" == "failure" ]]; then
             echo "Pipeline FAILED - Check logs for details"
             exit 1
           else

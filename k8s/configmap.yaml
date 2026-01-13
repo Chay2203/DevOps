@@ -1,0 +1,14 @@
+# =============================================================================
+# ConfigMap - Application configuration
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: image-editor-config
+  namespace: image-editor
+  labels:
+    app: image-editor
+data:
+  # Application settings
+  JAVA_OPTS: "-Xmx384m -Xms128m"
+  LOG_LEVEL: "INFO"

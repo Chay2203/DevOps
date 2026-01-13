@@ -1,0 +1,10 @@
+# =============================================================================
+# Namespace - Isolated environment for the Image Editor application
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: image-editor
+  labels:
+    app: image-editor
+    environment: production
