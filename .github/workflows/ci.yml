@@ -305,11 +305,11 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ===========================================================================
-  # Stage 13: Deploy to Kubernetes
+  # Stage 13: Deploy to Kubernetes (using self-hosted runner)
   # ===========================================================================
   deploy:
     name: Deploy to Kubernetes
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [docker]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     environment: production
@@ -319,57 +319,32 @@ jobs:
         uses: actions/checkout@v4
 
       # -----------------------------------------------------------------------
-      # Check if Kubernetes credentials are configured
+      # Verify kubectl is available on self-hosted runner
       # -----------------------------------------------------------------------
-      - name: Check Kubernetes Credentials
-        id: k8s-check
+      - name: Verify kubectl
         run: |
-          if [ -n "${{ secrets.KUBE_CONFIG }}" ]; then
-            echo "has_credentials=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_credentials=false" >> $GITHUB_OUTPUT
-            echo "::warning::Kubernetes credentials not configured. Skipping deployment."
-            echo "::warning::To enable deployment, add KUBE_CONFIG secret with base64 encoded kubeconfig"
-          fi
-
-      # -----------------------------------------------------------------------
-      # Setup kubectl
-      # -----------------------------------------------------------------------
-      - name: Setup kubectl
-        if: steps.k8s-check.outputs.has_credentials == 'true'
-        uses: azure/setup-kubectl@v3
-        with:
-          version: 'latest'
-
-      # -----------------------------------------------------------------------
-      # Configure Kubernetes credentials
-      # -----------------------------------------------------------------------
-      - name: Configure Kubernetes
-        if: steps.k8s-check.outputs.has_credentials == 'true'
-        run: |
-          mkdir -p $HOME/.kube
-          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > $HOME/.kube/config
-          chmod 600 $HOME/.kube/config
+          echo "Verifying kubectl is available..."
+          kubectl version --client
+          echo "kubectl is ready!"
 
       # -----------------------------------------------------------------------
       # Update image tag in Kustomization
       # -----------------------------------------------------------------------
       - name: Update Image Tag
-        if: steps.k8s-check.outputs.has_credentials == 'true'
         run: |
           cd k8s
           # Update the image in kustomization.yaml
-          sed -i "s|newName: DOCKERHUB_USERNAME/image-editor|newName: ${{ secrets.DOCKERHUB_USERNAME }}/image-editor|g" kustomization.yaml
-          sed -i "s|newTag: latest|newTag: ${{ github.sha }}|g" kustomization.yaml
+          sed -i "s|newName: .*image-editor|newName: ${{ secrets.DOCKERHUB_USERNAME }}/image-editor|g" kustomization.yaml
+          sed -i "s|newTag: .*|newTag: ${{ github.sha }}|g" kustomization.yaml
           echo "Updated kustomization.yaml:"
           cat kustomization.yaml
 
       # -----------------------------------------------------------------------
       # Deploy to Kubernetes
       # Why: Applies the Kubernetes manifests to deploy the application
+      # Self-hosted runner has direct access to the cluster
       # -----------------------------------------------------------------------
       - name: Deploy to Kubernetes
-        if: steps.k8s-check.outputs.has_credentials == 'true'
         run: |
           echo "Deploying to Kubernetes..."
           kubectl apply -k k8s/
@@ -384,7 +359,6 @@ jobs:
       # Verify Deployment
       # -----------------------------------------------------------------------
       - name: Verify Deployment
-        if: steps.k8s-check.outputs.has_credentials == 'true'
         run: |
           echo "=============================================="
           echo "         Deployment Verification              "
