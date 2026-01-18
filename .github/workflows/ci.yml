@@ -333,9 +333,9 @@ jobs:
       - name: Update Image Tag
         run: |
           cd k8s
-          # Update the image in kustomization.yaml
-          sed -i "s|newName: .*image-editor|newName: ${{ secrets.DOCKERHUB_USERNAME }}/image-editor|g" kustomization.yaml
-          sed -i "s|newTag: .*|newTag: ${{ github.sha }}|g" kustomization.yaml
+          # Update the image in kustomization.yaml (using macOS-compatible sed)
+          sed -i '' "s|newName: .*image-editor|newName: ${{ secrets.DOCKERHUB_USERNAME }}/image-editor|g" kustomization.yaml
+          sed -i '' "s|newTag: .*|newTag: ${{ github.sha }}|g" kustomization.yaml
           echo "Updated kustomization.yaml:"
           cat kustomization.yaml
 
