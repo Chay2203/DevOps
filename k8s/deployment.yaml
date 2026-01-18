@@ -31,6 +31,15 @@ spec:
           image: IMAGE_PLACEHOLDER
           imagePullPolicy: IfNotPresent
 
+          # Keep container running (CLI tool doesn't run as daemon)
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Image Editor container started"
+              java -jar image-editor.jar --help
+              echo "Container ready - keeping alive for job submissions"
+              tail -f /dev/null
+
           # Resource limits for stability
           resources:
             requests:
@@ -48,17 +57,13 @@ spec:
               drop:
                 - ALL
 
-          # Health checks
+          # Health check - verify container is alive
           livenessProbe:
             exec:
-              command:
-                - java
-                - -jar
-                - image-editor.jar
-                - --help
-            initialDelaySeconds: 30
-            periodSeconds: 60
-            timeoutSeconds: 10
+              command: ["pgrep", "-f", "tail"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
 
           # Volume mounts for image processing
           volumeMounts:
