@@ -1,16 +1,4 @@
-# =============================================================================
-# Image Editor - CI/CD Pipeline
-# =============================================================================
-# Production-grade CI/CD pipeline implementing DevSecOps best practices:
-# - Code quality checks (Checkstyle)
-# - Static Application Security Testing (CodeQL)
-# - Software Composition Analysis (OWASP Dependency Check)
-# - Unit testing with JUnit 5
-# - Container vulnerability scanning (Trivy)
-# - Docker image build and push to DockerHub
-# =============================================================================
-
-name: CI/CD Pipeline
+name: CI Pipeline
 
 on:
   push:
@@ -18,39 +6,22 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
-    inputs:
-      skip_security_scans:
-        description: 'Skip security scans (for faster iteration)'
-        required: false
-        default: 'false'
-        type: boolean
 
 env:
   JAVA_VERSION: '17'
   DOCKER_IMAGE_NAME: image-editor
 
 jobs:
-  # ===========================================================================
-  # Stage 1-3: Build Setup
-  # ===========================================================================
   build:
     name: Build & Test
     runs-on: ubuntu-latest
 
     steps:
-      # -----------------------------------------------------------------------
-      # Stage 1: Checkout - Retrieve source code
-      # Why: Foundation step to get the codebase for all subsequent operations
-      # -----------------------------------------------------------------------
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for better analysis
+          fetch-depth: 0
 
-      # -----------------------------------------------------------------------
-      # Stage 2: Setup Java Runtime
-      # Why: Provides consistent Java environment across all CI runs
-      # -----------------------------------------------------------------------
       - name: Setup Java ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
@@ -58,10 +29,6 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      # -----------------------------------------------------------------------
-      # Stage 3: Cache Dependencies
-      # Why: Speeds up builds by reusing downloaded dependencies
-      # -----------------------------------------------------------------------
       - name: Cache Maven Dependencies
         uses: actions/cache@v4
         with:
@@ -72,29 +39,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      # -----------------------------------------------------------------------
-      # Stage 4: Linting (Checkstyle)
-      # Why: Enforces coding standards, prevents technical debt accumulation
-      # -----------------------------------------------------------------------
       - name: Code Linting (Checkstyle)
         run: mvn checkstyle:check -Dcheckstyle.failsOnError=false
         continue-on-error: true
 
-      # -----------------------------------------------------------------------
-      # Stage 7: Unit Tests
-      # Why: Validates business logic, prevents regressions in functionality
-      # -----------------------------------------------------------------------
       - name: Run Unit Tests
         run: mvn test
 
-      # -----------------------------------------------------------------------
-      # Stage 8: Build Application
-      # Why: Creates deployable JAR artifact for containerization
-      # -----------------------------------------------------------------------
       - name: Build Application
         run: mvn package -DskipTests
 
-      # Upload build artifacts for subsequent jobs
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -102,53 +56,9 @@ jobs:
           path: target/*.jar
           retention-days: 5
 
-  # ===========================================================================
-  # Stage 5: SAST - Static Application Security Testing (CodeQL)
-  # ===========================================================================
-  sast:
-    name: SAST (CodeQL)
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      # -----------------------------------------------------------------------
-      # Stage 5: SAST with CodeQL
-      # Why: Detects OWASP Top 10 vulnerabilities (SQL injection, XSS, etc.)
-      #      Shifts security left by catching issues before deployment
-      # -----------------------------------------------------------------------
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: java
-          queries: security-extended
-
-      - name: Setup Java for CodeQL
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: 'temurin'
-
-      - name: Build for CodeQL Analysis
-        run: mvn compile -DskipTests
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:java"
-
-  # ===========================================================================
-  # Stage 6: SCA - Software Composition Analysis (OWASP Dependency Check)
-  # ===========================================================================
   sca:
     name: SCA (Dependency Check)
     runs-on: ubuntu-latest
-    if: github.event.inputs.skip_security_scans != 'true'
 
     steps:
       - name: Checkout Code
@@ -161,11 +71,6 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      # -----------------------------------------------------------------------
-      # Stage 6: SCA with OWASP Dependency Check
-      # Why: Identifies known vulnerabilities (CVEs) in dependencies
-      #      Protects against supply chain attacks
-      # -----------------------------------------------------------------------
       - name: OWASP Dependency Check
         run: mvn org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=9
         continue-on-error: true
@@ -178,9 +83,6 @@ jobs:
           path: target/dependency-check-report.html
           retention-days: 5
 
-  # ===========================================================================
-  # Stage 9-12: Docker Build, Scan, Test, and Push
-  # ===========================================================================
   docker:
     name: Docker Build & Push
     runs-on: ubuntu-latest
@@ -200,10 +102,6 @@ jobs:
       - name: Build JAR for Docker
         run: mvn package -DskipTests
 
-      # -----------------------------------------------------------------------
-      # Stage 9: Docker Build
-      # Why: Creates consistent, portable container image for deployment
-      # -----------------------------------------------------------------------
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -220,11 +118,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # -----------------------------------------------------------------------
-      # Stage 10: Container Vulnerability Scan (Trivy)
-      # Why: Detects OS and library vulnerabilities in the container image
-      #      Prevents shipping vulnerable images to production
-      # -----------------------------------------------------------------------
       - name: Scan Docker Image with Trivy
         uses: aquasecurity/trivy-action@master
         with:
@@ -250,22 +143,10 @@ jobs:
           sarif_file: 'trivy-results.sarif'
         continue-on-error: true
 
-      # -----------------------------------------------------------------------
-      # Stage 11: Runtime Test
-      # Why: Validates that the container actually runs and responds correctly
-      #      Catches issues that static analysis might miss
-      # -----------------------------------------------------------------------
       - name: Container Runtime Test
         run: |
-          echo "Testing container startup..."
           docker run --rm ${{ env.DOCKER_IMAGE_NAME }}:test --help
-          echo "Container runtime test passed!"
 
-      # -----------------------------------------------------------------------
-      # Stage 12: Push to DockerHub Registry
-      # Why: Publishes trusted, scanned image for downstream deployment
-      #      Only runs on main branch to prevent publishing untested code
-      # -----------------------------------------------------------------------
       - name: Check DockerHub Credentials
         id: dockerhub-check
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -275,7 +156,6 @@ jobs:
             echo "image_name=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE_NAME }}" >> $GITHUB_OUTPUT
           else
             echo "has_credentials=false" >> $GITHUB_OUTPUT
-            echo "::warning::DockerHub credentials not configured. Skipping push."
           fi
 
       - name: Login to DockerHub
@@ -308,106 +188,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ===========================================================================
-  # Stage 13: Deploy to Kubernetes (using self-hosted runner)
-  # ===========================================================================
-  deploy:
-    name: Deploy to Kubernetes
-    runs-on: self-hosted
-    needs: [docker]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    environment: production
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      # -----------------------------------------------------------------------
-      # Verify kubectl is available on self-hosted runner
-      # -----------------------------------------------------------------------
-      - name: Verify kubectl
-        run: |
-          echo "Verifying kubectl is available..."
-          kubectl version --client
-          echo "kubectl is ready!"
-
-      # -----------------------------------------------------------------------
-      # Update image tag in Kustomization
-      # -----------------------------------------------------------------------
-      - name: Update Image Tag
-        run: |
-          cd k8s
-          # Use short SHA (7 chars) to match Docker metadata action
-          SHORT_SHA=${GITHUB_SHA::7}
-          echo "Using image tag: $SHORT_SHA"
-          # Update the image in kustomization.yaml (using macOS-compatible sed)
-          sed -i '' "s|newName: .*image-editor|newName: ${{ secrets.DOCKERHUB_USERNAME }}/image-editor|g" kustomization.yaml
-          sed -i '' "s|newTag: .*|newTag: ${SHORT_SHA}|g" kustomization.yaml
-          echo "Updated kustomization.yaml:"
-          cat kustomization.yaml
-
-      # -----------------------------------------------------------------------
-      # Deploy to Kubernetes
-      # Why: Applies the Kubernetes manifests to deploy the application
-      # Self-hosted runner has direct access to the cluster
-      # -----------------------------------------------------------------------
-      - name: Deploy to Kubernetes
-        run: |
-          echo "Deploying to Kubernetes..."
-          kubectl apply -k k8s/
-
-          echo "Waiting for deployment to complete..."
-          kubectl rollout status deployment/image-editor -n image-editor --timeout=300s
-
-          echo "Deployment successful!"
-          kubectl get pods -n image-editor
-
-      # -----------------------------------------------------------------------
-      # Verify Deployment
-      # -----------------------------------------------------------------------
-      - name: Verify Deployment
-        run: |
-          echo "=============================================="
-          echo "         Deployment Verification              "
-          echo "=============================================="
-          echo ""
-          echo "Pods:"
-          kubectl get pods -n image-editor -o wide
-          echo ""
-          echo "Services:"
-          kubectl get svc -n image-editor
-          echo ""
-          echo "Deployment Details:"
-          kubectl describe deployment image-editor -n image-editor | head -50
-
-  # ===========================================================================
-  # Pipeline Summary
-  # ===========================================================================
   summary:
     name: Pipeline Summary
     runs-on: ubuntu-latest
-    needs: [build, sast, sca, docker, deploy]
+    needs: [build, sca, docker]
     if: always()
 
     steps:
       - name: Pipeline Status Summary
         run: |
           echo "=============================================="
-          echo "           CI/CD Pipeline Summary             "
+          echo "           CI Pipeline Summary                "
           echo "=============================================="
           echo ""
           echo "Build & Test:     ${{ needs.build.result }}"
-          echo "SAST (CodeQL):    ${{ needs.sast.result }}"
           echo "SCA (OWASP):      ${{ needs.sca.result }}"
           echo "Docker:           ${{ needs.docker.result }}"
-          echo "Deploy (K8s):     ${{ needs.deploy.result }}"
           echo ""
           echo "=============================================="
-
           if [[ "${{ needs.build.result }}" == "failure" ]] || \
-             [[ "${{ needs.docker.result }}" == "failure" ]] || \
-             [[ "${{ needs.deploy.result }}" == "failure" ]]; then
-            echo "Pipeline FAILED - Check logs for details"
+             [[ "${{ needs.docker.result }}" == "failure" ]]; then
+            echo "Pipeline FAILED"
             exit 1
           else
             echo "Pipeline PASSED"
